@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Martian RAG Simulator</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PDF.js Library for client-side PDF text extraction -->
+    <!-- We use the older standard build for easy inclusion in a single file -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f9;
+        }
+        .container-bg {
+            background-color: #ffffff;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e0e0e7;
+        }
+        .ai-response {
+            border-left: 4px solid #4f46e5;
+            background-color: #f3f4ff;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4f46e5;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen">
+
+    <div class="max-w-4xl mx-auto">
+        <header class="text-center mb-10">
+            <h1 class="text-3xl font-bold text-gray-800">RAG Model Simulator</h1>
+            <p class="text-lg text-gray-500 mt-2">Grounding the LLM with the Martian Agriculture Protocol (Simulated PDF Data).</p>
+        </header>
+
+        <!-- Source Document Upload and Display -->
+        <div class="container-bg rounded-xl p-6 mb-8">
+            <h2 class="text-xl font-semibold text-indigo-700 mb-4">Source Document Setup</h2>
+            
+            <div class="flex items-center space-x-4 mb-4">
+                <label for="file-input" class="cursor-pointer px-4 py-2 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition duration-150">
+                    <svg class="w-5 h-5 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                    Upload Document (.pdf, .md, .txt)
+                </label>
+                <input type="file" id="file-input" accept=".pdf, .md, .txt" class="hidden">
+            </div>
+            
+            <p id="file-status" class="text-sm text-yellow-600 mb-4 p-2 bg-yellow-50 rounded-lg">
+                **Status:** Initializing.
+            </p>
+
+            <h3 class="text-lg font-medium text-gray-700 mb-2">Current Document Content</h3>
+            <div id="source-doc" class="text-sm text-gray-700 max-h-60 overflow-y-auto p-4 bg-gray-50 rounded-lg border border-gray-200 whitespace-pre-line">
+                <!-- Content will be inserted here by JS -->
+            </div>
+            <p class="text-xs mt-3 text-gray-500">The RAG process uses this text as its knowledge base.</p>
+        </div>
+
+        <!-- User Input and Controls -->
+        <div class="container-bg rounded-xl p-6 mb-8">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Ask a Question</h2>
+            <textarea id="user-query" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" rows="2" placeholder="e.g., What are the humidity risks associated with Phobos Leaf?"></textarea>
+            <button id="run-rag-btn" class="mt-4 w-full px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 flex items-center justify-center disabled:opacity-50">
+                <span id="button-text">Run RAG Query</span>
+                <div id="loading-spinner" class="spinner ml-2 hidden"></div>
+            </button>
+        </div>
+
+        <!-- Output Areas -->
+        <div class="container-bg rounded-xl p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">RAG Output</h2>
+
+            <!-- Step 1: Retrieval -->
+            <div class="mb-6">
+                <h3 class="text-lg font-medium text-gray-700 flex items-center mb-2">
+                    <svg class="w-5 h-5 mr-2 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                    1. Retrieved Context (Top 3 Chunks)
+                </h3>
+                <div id="retrieved-context" class="p-3 text-sm text-gray-600 bg-gray-100 rounded-lg min-h-20">
+                    No retrieval performed yet.
+                </div>
+            </div>
+
+            <!-- Step 2: Generation -->
+            <div>
+                <h3 class="text-lg font-medium text-gray-700 flex items-center mb-2">
+                    <svg class="w-5 h-5 mr-2 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    2. Grounded AI Response
+                </h3>
+                <div id="ai-response" class="ai-response p-4 text-gray-800 rounded-lg transition-all min-h-20">
+                    The LLM response, grounded by the retrieved context, will appear here.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Configuration and Constants ---
+        const apiKey = "AIzaSyC0Qv1iwMYiZq1J5mJsguCoMbQCeNOgkig"; 
+        const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent";
+        
+        // Configure PDF.js worker path
+        if (window.pdfjsLib) {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+        }
+
+
+        // --- Document State Variables (Now mutable for file upload) ---
+        let CURRENT_DOCUMENT_CONTENT = '';
+        let DOCUMENT_CHUNKS = [];
+
+        // --- Default Mock Content (Full content from marscrops_policy.md) ---
+        const DEFAULT_MOCK_PDF_CONTENT = `
+# Martian Crop Sustainability Protocol - Version 2.1
+
+## Section 1: Introduction to Martian Agriculture
+The primary goal of Martian agriculture is to establish a **closed-loop ecosystem**. This protocol outlines procedures for maximizing yield under low gravity and high radiation exposure. All procedures must prioritize **water conservation** via hydroponic systems.
+
+---
+
+## Section 2: Approved Cultivars
+Only specific, genetically modified (GM) cultivars are permitted for initial colonization phases.
+1. Solanum Tuberosum (Potato - "Red Planet Blend"): Requires 12 hours of light cycle. Highly resistant to regolith alkalinity. Primary focus for caloric intake.
+2. Triticum Aestivum (Wheat - "Ares Grain"): Used for atmospheric processing benefits and secondary caloric intake. Must be grown in **airtight domes** due to sensitivity to trace atmospheric toxins.
+3. Lactuca Sativa (Lettuce - "Phobos Leaf"): A fast-cycling crop used primarily for oxygen production and dietary variety. It is highly susceptible to **fungal bloom if humidity exceeds 70%**.
+4. Ipomoea Batatas (Sweet Potato - "Phobos Tubers"): Excellent secondary energy source. Requires high **potassium (K) ratios** during the tuber swelling phase. Can tolerate slightly lower light cycles (10 hours).
+
+---
+
+## Section 3: Water Recycling and Nutrient Delivery
+All water, including condensate from crew habitation units, is funneled into the central bioreactor before being recycled into the hydroponic system.
+Nutrient delivery (N-P-K ratios) must be adjusted weekly based on real-time spectrometer readings. A **nitrogen deficiency** is the most common issue encountered during early phase growth.
+Nutrient adjustments must also include daily monitoring of the solution's **pH, targeting a range of 5.8 to 6.2**. If the pH falls below 5.5, a calcium hydroxide buffer must be manually introduced. Micronutrients, specifically Iron (Fe) and Manganese (Mn), are supplied via **chelated compounds** to prevent precipitation in the recycled water system.
+
+---
+
+## Section 5: Radiation Shielding and Maintenance
+All biodomes utilize a **2-meter thick layer of regolith-packed poly-sandbags** for primary shielding. Secondary, active shielding is maintained by a magnetic field generator; if the magnetic field drops below **500 mT (milliTesla)**, emergency procedures must be initiated, and crew access to the biodome must be restricted until full shielding is restored. Maintenance checks on the poly-sandbags are scheduled quarterly.
+
+---
+
+## Section 6: Waste Management and Bioreactor Protocol
+Non-edible biomass (stems, leaves, roots) is processed through the **anaerobic bioreactor**. This process generates methane for power and liquid fertilizer for the hydroponic system, closing the nutrient loop. The solid waste residue, or **digestate**, is sterilized and used to amend external regolith test beds.
+        `;
+
+        /**
+         * Parses the raw text into chunks, updates global state, and refreshes the UI display.
+         * @param {string} rawText The content of the uploaded file or default mock text.
+         * @param {string} fileName The name of the file, or 'Default Protocol'.
+         */
+        function updateDocumentContent(rawText, fileName = 'Default Protocol') {
+            CURRENT_DOCUMENT_CONTENT = rawText.trim();
+            
+            // Simple chunking logic (by paragraph/newline)
+            DOCUMENT_CHUNKS = CURRENT_DOCUMENT_CONTENT
+                .split('\n\n')
+                .filter(c => c.trim().length > 10)
+                .map(c => c.trim());
+
+            // Update UI
+            document.getElementById('source-doc').textContent = CURRENT_DOCUMENT_CONTENT;
+            document.getElementById('file-status').innerHTML = `**Status:** Document loaded from **${fileName}**. Ready for RAG query.`;
+
+            // Clear previous RAG results
+            document.getElementById('retrieved-context').textContent = 'New document loaded. Ready to retrieve context.';
+            document.getElementById('ai-response').innerHTML = 'The LLM response will appear here.';
+            
+            // Re-enable button if it was disabled during upload
+            document.getElementById('run-rag-btn').disabled = false;
+        }
+
+        /**
+         * Extracts text content from an uploaded PDF file using PDF.js.
+         * @param {File} file The PDF File object.
+         * @returns {Promise<string>} A promise that resolves to the extracted text.
+         */
+        async function extractTextFromPDF(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const data = new Uint8Array(e.target.result);
+                    try {
+                        const loadingTask = window.pdfjsLib.getDocument({ data: data });
+                        const pdf = await loadingTask.promise;
+                        let textContent = '';
+                        
+                        for (let i = 1; i <= pdf.numPages; i++) {
+                            const page = await pdf.getPage(i);
+                            const text = await page.getTextContent();
+                            textContent += text.items.map(item => item.str).join(' ') + '\n\n';
+                        }
+                        resolve(textContent);
+                    } catch (err) {
+                        reject(new Error("Failed to process PDF: " + err.message));
+                    }
+                };
+                reader.onerror = () => reject(new Error("Failed to read PDF file data."));
+                reader.readAsArrayBuffer(file);
+            });
+        }
+        
+        /**
+         * Initializes the default content when the page loads.
+         */
+        function loadDefaultContent() {
+            updateDocumentContent(DEFAULT_MOCK_PDF_CONTENT, 'Default Martian Protocol');
+        }
+
+        /**
+         * Handles file selection and reading.
+         * @param {Event} event The file input change event.
+         */
+        async function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            document.getElementById('run-rag-btn').disabled = true;
+            document.getElementById('file-status').innerHTML = `<strong class="text-indigo-600">Processing:</strong> Reading ${file.name}...`;
+
+            try {
+                if (file.name.toLowerCase().endsWith('.pdf')) {
+                    if (!window.pdfjsLib) {
+                        throw new Error("PDF.js library failed to load. Cannot process PDF files.");
+                    }
+                    const content = await extractTextFromPDF(file);
+                    updateDocumentContent(content, file.name);
+                } else if (file.name.toLowerCase().endsWith('.md') || file.name.toLowerCase().endsWith('.txt')) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => updateDocumentContent(e.target.result, file.name);
+                    reader.onerror = () => { throw new Error('Could not read the text file.'); };
+                    reader.readAsText(file);
+                } else {
+                    throw new Error("Unsupported file type. Please upload a .pdf, .md, or .txt file.");
+                }
+            } catch (error) {
+                document.getElementById('file-status').innerHTML = `<strong class="text-red-600">Error loading ${file.name}:</strong> ${error.message}`;
+                console.error("File processing error:", error);
+                document.getElementById('run-rag-btn').disabled = false;
+            }
+        }
+
+        // --- RAG Functions ---
+
+        /**
+         * Simulates the Retrieval step of RAG (Vector Search/Indexing).
+         * Uses a basic keyword overlap heuristic.
+         * @param {string} query The user's input query.
+         * @returns {string} The concatenated context string of the top relevant chunks.
+         */
+        function retrieveContext(query) {
+            const queryWords = new Set(query.toLowerCase().match(/\b\w{3,}\b/g) || []);
+            const scoredChunks = DOCUMENT_CHUNKS.map(chunk => {
+                const chunkLower = chunk.toLowerCase();
+                let score = 0;
+                // Simple score based on keyword overlap
+                queryWords.forEach(word => {
+                    if (chunkLower.includes(word)) {
+                        score += 1;
+                    }
+                });
+                // Score boost for section headers
+                if (chunk.startsWith('#') || chunk.startsWith('##')) {
+                    score += 0.5;
+                }
+                return { chunk, score };
+            }).filter(item => item.score > 0);
+
+            // Sort by score and take the top 3 chunks
+            const topChunks = scoredChunks
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 3)
+                .map(item => item.chunk);
+
+            // Join the retrieved context into a single string
+            return topChunks.join('\n---\n');
+        }
+
+        /**
+         * Simulates the Generation step of RAG (LLM Call with Context).
+         */
+        async function generateAnswer(query, context) {
+            const systemPrompt = `You are a specialized Martian Agriculture Protocol AI. Your task is to answer the user's question accurately and concisely, using ONLY the CONTEXT provided below. Do not use outside knowledge. If the answer is not found in the context, state "I cannot find the answer in the provided document."`;
+
+            const userQuery = `USER QUESTION: ${query}\n\nCONTEXT FROM DOCUMENT:\n---\n${context}\n---`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+
+            const url = `${apiUrl}?key=${apiKey}`;
+
+            // Implement exponential backoff for retries
+            const maxRetries = 5;
+            let response = null;
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        break; // Success! Exit loop
+                    } else if (response.status === 429) {
+                        // Too many requests (throttling) - wait and retry
+                        const delay = Math.pow(2, i) * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        // Other HTTP error - throw to catch block
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                } catch (error) {
+                    console.error('API call failed with error:', error);
+                    if (i === maxRetries - 1) {
+                        throw new Error('API request failed after multiple retries. Please check your network connection and try running the query again in a moment.');
+                    }
+                }
+            }
+
+            if (!response || !response.ok) {
+                return 'An error occurred during API communication after retries.';
+            }
+
+            const result = await response.json();
+            const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+            return text || 'The model generated an empty response.';
+        }
+
+        // --- UI Logic and Execution ---
+
+        const runRagBtn = document.getElementById('run-rag-btn');
+        const userQueryInput = document.getElementById('user-query');
+        const retrievedContextDiv = document.getElementById('retrieved-context');
+        const aiResponseDiv = document.getElementById('ai-response');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const buttonText = document.getElementById('button-text');
+        const fileInput = document.getElementById('file-input');
+
+        // Initial setup
+        loadDefaultContent();
+        fileInput.addEventListener('change', handleFileSelect);
+
+
+        runRagBtn.addEventListener('click', async () => {
+            const query = userQueryInput.value.trim();
+            if (!query) {
+                const message = "Please enter a query to run the RAG simulation.";
+                retrievedContextDiv.textContent = message;
+                aiResponseDiv.textContent = '';
+                console.error(message);
+                return;
+            }
+
+            if (DOCUMENT_CHUNKS.length === 0) {
+                 aiResponseDiv.textContent = 'RAG failed: The current document is empty or contains no substantial content.';
+                 return;
+            }
+
+            // Reset UI and show loading
+            runRagBtn.disabled = true;
+            loadingSpinner.classList.remove('hidden');
+            buttonText.textContent = 'Processing...';
+            retrievedContextDiv.textContent = 'Retrieving context...';
+            aiResponseDiv.innerHTML = '<p class="text-gray-500">Waiting for LLM generation...</p>';
+
+            try {
+                // STEP 1: RETRIEVAL
+                const context = retrieveContext(query);
+                retrievedContextDiv.textContent = context || 'No relevant chunks found in the document.';
+
+                if (!context) {
+                    aiResponseDiv.textContent = 'RAG failed: No context was retrieved, so no answer can be generated.';
+                    return;
+                }
+
+                // STEP 2: GENERATION (API Call)
+                const answer = await generateAnswer(query, context);
+                aiResponseDiv.textContent = answer;
+
+            } catch (error) {
+                console.error('RAG Simulation Error:', error);
+                aiResponseDiv.textContent = `An error occurred: ${error.message}`;
+            } finally {
+                // Restore UI state
+                runRagBtn.disabled = false;
+                loadingSpinner.classList.add('hidden');
+                buttonText.textContent = 'Run RAG Query';
+            }
+        });
+    </script>
+</body>
+</html>
