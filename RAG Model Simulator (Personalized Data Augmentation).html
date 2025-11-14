@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Martian RAG Simulator</title>
+    <title>RAG Simulator</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- PDF.js Library for client-side PDF text extraction -->
@@ -22,12 +22,12 @@
             border: 1px solid #e0e0e7;
         }
         .ai-response {
-            border-left: 4px solid #4f46e5;
+            border-left: 4px solid #bb4776;
             background-color: #f3f4ff;
         }
         .spinner {
             border: 4px solid #f3f3f3;
-            border-top: 4px solid #4f46e5;
+            border-top: 4px solid #9b65d9;
             border-radius: 50%;
             width: 24px;
             height: 24px;
@@ -74,7 +74,7 @@
         <div class="container-bg rounded-xl p-6 mb-8">
             <h2 class="text-xl font-semibold text-gray-800 mb-4">Ask a Question</h2>
             <textarea id="user-query" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" rows="2" placeholder="e.g., What are the humidity risks associated with Phobos Leaf?"></textarea>
-            <button id="run-rag-btn" class="mt-4 w-full px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 flex items-center justify-center disabled:opacity-50">
+            <button id="run-rag-btn" class="mt-4 w-full px-4 py-2 bg-[#9b65d9] text-white font-semibold rounded-lg shadow-md hover:bg-[#874ec0] transition duration-150 flex items-center justify-center disabled:opacity-50">
                 <span id="button-text">Run RAG Query</span>
                 <div id="loading-spinner" class="spinner ml-2 hidden"></div>
             </button>
@@ -90,7 +90,7 @@
                     <svg class="w-5 h-5 mr-2 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
                     1. Retrieved Context (Top 3 Chunks)
                 </h3>
-                <div id="retrieved-context" class="p-3 text-sm text-gray-600 bg-gray-100 rounded-lg min-h-20">
+                <div id="retrieved-context" class="p-3 text-sm text-gray-600 bg-gray-100 rounded-lg min-h-20 whitespace-pre-line">
                     No retrieval performed yet.
                 </div>
             </div>
@@ -118,9 +118,13 @@
             window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
         }
 
+        // --- RAG Configuration Constants ---
+        const MAX_CONTEXT_CHUNKS = 3; // Number of highest-scoring chunks to retrieve
+        const MIN_CHUNK_LENGTH = 50; // Minimum characters per chunk for filtering
 
         // --- Document State Variables (Now mutable for file upload) ---
         let CURRENT_DOCUMENT_CONTENT = '';
+        // DOCUMENT_CHUNKS now stores objects: { index: number, content: string, length: number }
         let DOCUMENT_CHUNKS = [];
 
         // --- Default Mock Content (Full content from marscrops_policy.md) ---
@@ -165,15 +169,24 @@ Non-edible biomass (stems, leaves, roots) is processed through the **anaerobic b
         function updateDocumentContent(rawText, fileName = 'Default Protocol') {
             CURRENT_DOCUMENT_CONTENT = rawText.trim();
             
-            // Simple chunking logic (by paragraph/newline)
-            DOCUMENT_CHUNKS = CURRENT_DOCUMENT_CONTENT
+            // Chunking logic: Split by paragraph/newline, filter by length, and map to objects with index.
+            // Each chunk now includes a serial index (for tracking) and length (chunk value).
+            const rawChunks = CURRENT_DOCUMENT_CONTENT
                 .split('\n\n')
-                .filter(c => c.trim().length > 10)
-                .map(c => c.trim());
+                .map(c => c.trim())
+                .filter(c => c.length >= MIN_CHUNK_LENGTH);
+
+            DOCUMENT_CHUNKS = rawChunks.map((content, index) => ({
+                index: index + 1, // Start index from 1 (the serial number)
+                content: content,
+                length: content.length // Chunk length as a 'polarity/size value'
+            }));
+            
+            const chunkCount = DOCUMENT_CHUNKS.length;
 
             // Update UI
             document.getElementById('source-doc').textContent = CURRENT_DOCUMENT_CONTENT;
-            document.getElementById('file-status').innerHTML = `**Status:** Document loaded from **${fileName}**. Ready for RAG query.`;
+            document.getElementById('file-status').innerHTML = `**Status:** Document loaded from **${fileName}**. Processed into **${chunkCount}** indexed chunks (min length ${MIN_CHUNK_LENGTH} chars each). Ready for RAG query.`;
 
             // Clear previous RAG results
             document.getElementById('retrieved-context').textContent = 'New document loaded. Ready to retrieve context.';
@@ -234,7 +247,7 @@ Non-edible biomass (stems, leaves, roots) is processed through the **anaerobic b
             try {
                 if (file.name.toLowerCase().endsWith('.pdf')) {
                     if (!window.pdfjsLib) {
-                        throw new Error("PDF.js library failed to load. Cannot process PDF files.");
+                        throw new Error("PDF library failed to load. Cannot process PDF files.");
                     }
                     const content = await extractTextFromPDF(file);
                     updateDocumentContent(content, file.name);
@@ -259,34 +272,47 @@ Non-edible biomass (stems, leaves, roots) is processed through the **anaerobic b
          * Simulates the Retrieval step of RAG (Vector Search/Indexing).
          * Uses a basic keyword overlap heuristic.
          * @param {string} query The user's input query.
-         * @returns {string} The concatenated context string of the top relevant chunks.
+         * @returns {{contextForLlm: string, contextForDisplay: string}} An object containing the concatenated context string for the LLM and a formatted display string for the UI.
          */
         function retrieveContext(query) {
             const queryWords = new Set(query.toLowerCase().match(/\b\w{3,}\b/g) || []);
-            const scoredChunks = DOCUMENT_CHUNKS.map(chunk => {
-                const chunkLower = chunk.toLowerCase();
+            
+            const scoredChunks = DOCUMENT_CHUNKS.map(item => {
+                const chunkLower = item.content.toLowerCase();
                 let score = 0;
-                // Simple score based on keyword overlap
+                
+                // Simple score based on keyword overlap (Relevance Score)
                 queryWords.forEach(word => {
                     if (chunkLower.includes(word)) {
                         score += 1;
                     }
                 });
+                
                 // Score boost for section headers
-                if (chunk.startsWith('#') || chunk.startsWith('##')) {
+                if (item.content.startsWith('#') || item.content.startsWith('##')) {
                     score += 0.5;
                 }
-                return { chunk, score };
+                
+                // Return the original item plus the computed relevance score
+                return { ...item, score }; 
             }).filter(item => item.score > 0);
 
-            // Sort by score and take the top 3 chunks
-            const topChunks = scoredChunks
+            // Sort by score and take the top N chunks
+            const topScoredItems = scoredChunks
                 .sort((a, b) => b.score - a.score)
-                .slice(0, 3)
-                .map(item => item.chunk);
+                .slice(0, MAX_CONTEXT_CHUNKS);
 
-            // Join the retrieved context into a single string
-            return topChunks.join('\n---\n');
+            // 1. Concatenated context for the LLM prompt (The actual RAG step)
+            const contextForLlm = topScoredItems
+                .map(item => item.content)
+                .join('\n---\n');
+
+            // 2. Formatted display for the UI (Showing serial number and score)
+            const contextForDisplay = topScoredItems.map(item => 
+                `**Chunk #${item.index}** (Relevance Score: ${item.score.toFixed(1)} / Length: ${item.length} chars):\n${item.content}`
+            ).join('\n\n---\n\n');
+            
+            return { contextForLlm, contextForDisplay };
         }
 
         /**
@@ -382,16 +408,18 @@ Non-edible biomass (stems, leaves, roots) is processed through the **anaerobic b
 
             try {
                 // STEP 1: RETRIEVAL
-                const context = retrieveContext(query);
-                retrievedContextDiv.textContent = context || 'No relevant chunks found in the document.';
+                const { contextForLlm, contextForDisplay } = retrieveContext(query);
+                
+                // Use innerHTML to correctly render the serial numbers, scores, and line breaks
+                retrievedContextDiv.innerHTML = contextForDisplay || 'No relevant chunks found in the document.'; 
 
-                if (!context) {
+                if (!contextForLlm) {
                     aiResponseDiv.textContent = 'RAG failed: No context was retrieved, so no answer can be generated.';
                     return;
                 }
 
                 // STEP 2: GENERATION (API Call)
-                const answer = await generateAnswer(query, context);
+                const answer = await generateAnswer(query, contextForLlm); // Use contextForLlm for the LLM
                 aiResponseDiv.textContent = answer;
 
             } catch (error) {
